@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 from enum import Enum
 from math import ceil
 from argon2.exceptions import VerificationError
@@ -224,7 +224,8 @@ def discount_for(promo, amount):
         return min(promo['discount_value'],amount)
     if promo['discount_value'] > 70:
         return Decimal('0.00')
-    return money(amount * promo['discount_value'] / 100)
+    cap = (amount * Decimal('0.70')).quantize(Decimal('0.01'),rounding=ROUND_DOWN)
+    return min(money(amount * promo['discount_value'] / 100),cap)
 
 
 def create_order(body, db, actor):

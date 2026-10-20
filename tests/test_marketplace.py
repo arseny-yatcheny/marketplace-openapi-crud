@@ -320,3 +320,51 @@ def test_json_and_not_found(client, actors):
     error(response,400,'VALIDATION_ERROR')
     error(client.get('/missing'),404,'NOT_FOUND')
     assert client.get('/health').json() == {'status':'ok'}
+
+
+def test_new_item_price_and_return_of_old_reservation(client, actors, product):
+    first = product(price=100)
+    second = product(price=250)
+    order = create_order(client,actors['user'],first,2).json()
+    changed = update_order(client,actors['user'],order,second,3).json()
+    assert changed['total_amount'] == 750
+    assert changed['items'][0]['price_at_order'] == 250
+    assert stock(first['id']) == 20 and stock(second['id']) == 17
+
+
+def test_all_missing_stock_items_are_reported(client, actors, product):
+    first = product(stock=0)
+    second = product(stock=1)
+    response = client.post('/orders',headers=actors['user']['headers'],json={'items':[{'product_id':first['id'],'quantity':2},{'product_id':second['id'],'quantity':2}]})
+    error(response,409,'INSUFFICIENT_STOCK')
+    assert {row['product_id'] for row in response.json()['details']['products']} == {first['id'],second['id']}
+    assert stock(first['id']) == 0 and stock(second['id']) == 1
+
+
+def test_promo_permissions_and_date_validation(client, actors, promo):
+    created = promo()
+    fields = {key:val for key,val in created.items() if key not in ('id','current_uses')}
+    error(client.post('/promo-codes',headers=actors['user']['headers'],json=fields),403,'ACCESS_DENIED')
+    error(client.post('/promo-codes',headers=actors['seller']['headers'],json=fields),409,'PROMO_CODE_EXISTS')
+    error(client.post('/promo-codes',headers=actors['seller']['headers'],json={**fields,'code':'BAD_DATE','valid_until':fields['valid_from']}),400,'VALIDATION_ERROR')
+    error(client.post('/promo-codes',headers=actors['seller']['headers'],json={**fields,'code':'BAD_RATE','discount_value':101}),400,'VALIDATION_ERROR')
+
+
+def test_small_price_percentage_cap(client, actors, product, promo):
+    item = product(price=0.01)
+    promo(discount_value=70,min_order_amount=0)
+    order = create_order(client,actors['user'],item,promo_code='SALE20').json()
+    assert order['discount_amount'] == 0 and order['total_amount'] == 0.01
+
+
+def test_money_overflow_rolls_back(client, actors, product):
+    item = product(price=9999999999.99)
+    error(create_order(client,actors['user'],item,2),400,'VALIDATION_ERROR')
+    assert stock(item['id']) == 20
+
+
+def test_concurrent_refresh_rotation(client, account):
+    user = account()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _:client.post('/auth/refresh',json={'refresh_token':user['tokens']['refresh_token']}),range(2)))
+    assert sorted(response.status_code for response in responses) == [200,401]
