@@ -3,11 +3,11 @@ info:
   title: Marketplace API
   version: 1.0.0
   description: 'Учебный маркетплейс. Цена передаётся JSON-числом с точностью до копеек.
-    Все операции, кроме /auth/* и /health, требуют access JWT. Неверные входные данные
-    возвращают 400. Повторные product_id в заказе запрещены. Скидка PERCENTAGE свыше
-    70% не применяется: оплачивается 100% цены. При обновлении сохранённые позиции
-    сохраняют исходную цену; новые получают текущую. При отмене резерв и использование
-    промокода возвращаются один раз.'
+    Все операции, кроме /auth/*, требуют access JWT. Неверные входные данные возвращают
+    400. Повторные product_id в заказе запрещены. Скидка PERCENTAGE свыше 70% не применяется:
+    оплачивается 100% цены. При обновлении сохранённые позиции сохраняют исходную
+    цену; новые получают текущую. При отмене резерв и использование промокода возвращаются
+    один раз.'
 servers:
 - url: http://localhost:8000
 security:
@@ -206,9 +206,8 @@ paths:
     post:
       operationId: create_product
       summary: Создание товара
-      description: 'Создание товара. SELLER может указать только себя. ADMIN может
-        задать seller_id; по умолчанию владельцем становится автор запроса Роли: SELLER,
-        ADMIN.'
+      description: 'Создание товара. seller_id автоматически заполняется ID текущего
+        пользователя. Роли: SELLER, ADMIN.'
       tags:
       - products
       responses:
@@ -350,14 +349,12 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 2147483647
           default: 0
       - name: size
         in: query
         schema:
           type: integer
           minimum: 1
-          maximum: 100
           default: 20
       - name: status
         in: query
@@ -450,9 +447,8 @@ paths:
     put:
       operationId: update_product
       summary: Полная замена полей товара
-      description: 'Полная замена полей товара. SELLER меняет только свой товар и
-        не передаёт владение. ADMIN меняет любой. Отсутствующий seller_id сохраняет
-        владельца Роли: SELLER, ADMIN.'
+      description: 'Полное обновление полей товара. SELLER обновляет только свой товар,
+        ADMIN — любой. Владелец товара сохраняется. Роли: SELLER, ADMIN.'
       tags:
       - products
       responses:
@@ -997,103 +993,6 @@ paths:
         in: path
         required: true
         schema: *id001
-  /orders/{id}/status:
-    post:
-      operationId: transition_order
-      summary: Переход строго по цепочке CREATED → PAYMENT_PENDING → PAID → SHIPPED
-        → COMPLETED
-      description: 'Переход строго по цепочке CREATED → PAYMENT_PENDING → PAID → SHIPPED
-        → COMPLETED. Служебная операция ADMIN для демонстрации жизненного цикла Роли:
-        ADMIN.'
-      tags:
-      - orders
-      responses:
-        '200':
-          description: Успешный ответ
-          headers:
-            X-Request-Id:
-              schema: *id001
-              description: UUID запроса
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrderResponse'
-        '400':
-          description: VALIDATION_ERROR
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '500':
-          description: INTERNAL_ERROR
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '405':
-          description: METHOD_NOT_ALLOWED
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: TOKEN_INVALID, TOKEN_EXPIRED
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '403':
-          description: ACCESS_DENIED
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: ORDER_NOT_FOUND
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '409':
-          description: INVALID_STATE_TRANSITION
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-      x-roles:
-      - ADMIN
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema: *id001
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/OrderTransition'
   /promo-codes:
     post:
       operationId: create_promo
@@ -1174,53 +1073,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/PromoCreate'
-  /health:
-    get:
-      operationId: health
-      summary: Проверка доступности API и PostgreSQL
-      description: Проверка доступности API и PostgreSQL
-      tags:
-      - health
-      responses:
-        '200':
-          description: Успешный ответ
-          headers:
-            X-Request-Id:
-              schema: *id001
-              description: UUID запроса
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HealthResponse'
-        '400':
-          description: VALIDATION_ERROR
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '500':
-          description: INTERNAL_ERROR
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '405':
-          description: METHOD_NOT_ALLOWED
-          headers:
-            X-Request-Id:
-              schema: *id001
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-      x-roles: []
-      security: []
 components:
   securitySchemes:
     BearerAuth:
@@ -1283,9 +1135,6 @@ components:
           maxLength: 100
         status:
           $ref: '#/components/schemas/ProductStatus'
-        seller_id:
-          type: string
-          format: uuid
     ProductUpdate:
       type: object
       additionalProperties: false
@@ -1315,9 +1164,6 @@ components:
           maxLength: 100
         status:
           $ref: '#/components/schemas/ProductStatus'
-        seller_id:
-          type: string
-          format: uuid
     ProductResponse:
       type: object
       additionalProperties: false
@@ -1387,7 +1233,6 @@ components:
         size:
           type: integer
           minimum: 1
-          maximum: 100
     OrderItemInput:
       type: object
       additionalProperties: false
@@ -1484,19 +1329,6 @@ components:
             $ref: '#/components/schemas/OrderItemResponse'
         created_at: *id006
         updated_at: *id006
-    OrderTransition:
-      type: object
-      additionalProperties: false
-      required:
-      - status
-      properties:
-        status:
-          type: string
-          enum:
-          - PAYMENT_PENDING
-          - PAID
-          - SHIPPED
-          - COMPLETED
     PromoCreate:
       type: object
       additionalProperties: false
@@ -1685,16 +1517,6 @@ components:
           type: object
           additionalProperties: true
           nullable: true
-    HealthResponse:
-      type: object
-      additionalProperties: false
-      required:
-      - status
-      properties:
-        status:
-          type: string
-          enum:
-          - ok
 x-error-codes:
   PRODUCT_NOT_FOUND: 404
   PRODUCT_INACTIVE: 409

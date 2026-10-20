@@ -8,7 +8,7 @@ from app.middleware import RequestLoggingMiddleware
 from app.validation import CONTRACT
 
 logging.basicConfig(level=logging.INFO,format='%(message)s')
-app = FastAPI(title='Marketplace API',version='1.0.0')
+app = FastAPI(title='Marketplace API',version='1.0.0',redoc_url=None)
 app.openapi = lambda: CONTRACT
 app.add_exception_handler(BusinessError,business_error)
 app.add_exception_handler(RequestValidationError,validation_error)

@@ -6,9 +6,14 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 import jwt
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, select
+from sqlalchemy.orm import Session
 from app import settings
 from app.db import engine
+from app.errors import BusinessError
+from app.operations import set_order_status
+from app.tables import orders
+from app.validation import CONTRACT
 
 
 def sql(statement, **params):
@@ -37,6 +42,12 @@ def cancel(client, actor, order):
 
 def stock(id):
     return sql('SELECT stock FROM products WHERE id=:id',id=id)[0]['stock']
+
+
+def transition(order, target):
+    with Session(engine) as db, db.begin():
+        row = db.execute(select(orders).where(orders.c.id == UUID(order['id'])).with_for_update()).mappings().one()
+        set_order_status(db,row,target)
 
 
 def test_register_login_refresh(client):
@@ -73,6 +84,7 @@ def test_product_crud_and_filters(client, actors, product):
     result = client.get('/products?page=0&size=1',headers=actors['user']['headers']).json()
     assert result['totalElements'] == 2 and len(result['items']) == 1
     assert result['page'] == 0 and result['size'] == 1
+    assert client.get('/products?size=101',headers=actors['user']['headers']).json()['size'] == 101
     assert client.get('/products?page=50',headers=actors['user']['headers']).json()['items'] == []
     result = client.get('/products?category=books&status=INACTIVE',headers=actors['user']['headers']).json()
     assert [p['id'] for p in result['items']] == [second['id']]
@@ -98,7 +110,7 @@ def test_product_validation(client, actors, field, bad):
     assert sql('SELECT COUNT(*) AS n FROM products')[0]['n'] == 0
 
 
-@pytest.mark.parametrize('query',['page=-1','size=0','size=101','status=UNKNOWN','category=','page=abc'])
+@pytest.mark.parametrize('query',['page=-1','size=0','status=UNKNOWN','category=','page=abc'])
 def test_query_validation(client, actors, query):
     error(client.get('/products?'+query,headers=actors['user']['headers']),400,'VALIDATION_ERROR')
 
@@ -110,7 +122,7 @@ def test_product_permissions(client, actors, product):
     for actor in ('user','other_seller'):
         error(client.put('/products/'+item['id'],headers=actors[actor]['headers'],json=body),403,'ACCESS_DENIED')
         error(client.delete('/products/'+item['id'],headers=actors[actor]['headers']),403,'ACCESS_DENIED')
-    error(client.post('/products',headers=actors['seller']['headers'],json={**body,'seller_id':actors['other_seller']['id']}),403,'ACCESS_DENIED')
+    error(client.post('/products',headers=actors['seller']['headers'],json={**body,'seller_id':actors['other_seller']['id']}),400,'VALIDATION_ERROR')
     assert client.put('/products/'+item['id'],headers=actors['admin']['headers'],json=body).status_code == 200
 
 
@@ -217,11 +229,12 @@ def test_order_rate_limits_and_precedence(client, actors, product, monkeypatch):
 def test_order_lifecycle(client, actors, product):
     item = product()
     order = create_order(client,actors['user'],item).json()
-    path = '/orders/'+order['id']+'/status'
-    error(client.post(path,headers=actors['admin']['headers'],json={'status':'PAID'}),409,'INVALID_STATE_TRANSITION')
-    error(client.post(path,headers=actors['user']['headers'],json={'status':'PAYMENT_PENDING'}),403,'ACCESS_DENIED')
+    with pytest.raises(BusinessError) as failure:
+        transition(order,'PAID')
+    assert failure.value.code == 'INVALID_STATE_TRANSITION'
     for state in ('PAYMENT_PENDING','PAID','SHIPPED','COMPLETED'):
-        assert client.post(path,headers=actors['admin']['headers'],json={'status':state}).json()['status'] == state
+        transition(order,state)
+        assert client.get('/orders/'+order['id'],headers=actors['user']['headers']).json()['status'] == state
         error(update_order(client,actors['user'],order,item,2),409,'INVALID_STATE_TRANSITION')
         if state != 'PAYMENT_PENDING':
             error(cancel(client,actors['user'],order),409,'INVALID_STATE_TRANSITION')
@@ -231,7 +244,7 @@ def test_order_lifecycle(client, actors, product):
 def test_cancel_pending(client, actors, product):
     item = product()
     order = create_order(client,actors['user'],item).json()
-    client.post('/orders/'+order['id']+'/status',headers=actors['admin']['headers'],json={'status':'PAYMENT_PENDING'})
+    transition(order,'PAYMENT_PENDING')
     assert cancel(client,actors['user'],order).status_code == 200
     assert stock(item['id']) == 20
 
@@ -319,7 +332,17 @@ def test_json_and_not_found(client, actors):
     response = client.post('/products',headers={**actors['seller']['headers'],'Content-Type':'application/json'},content='{"name":')
     error(response,400,'VALIDATION_ERROR')
     error(client.get('/missing'),404,'NOT_FOUND')
-    assert client.get('/health').json() == {'status':'ok'}
+
+
+def test_only_required_api_routes():
+    expected = {
+        ('post','/auth/register'),('post','/auth/login'),('post','/auth/refresh'),
+        ('post','/products'),('get','/products'),('get','/products/{id}'),
+        ('put','/products/{id}'),('delete','/products/{id}'),
+        ('post','/orders'),('get','/orders/{id}'),('put','/orders/{id}'),
+        ('post','/orders/{id}/cancel'),('post','/promo-codes'),
+    }
+    assert {(method,path) for path,methods in CONTRACT['paths'].items() for method in methods} == expected
 
 
 def test_new_item_price_and_return_of_old_reservation(client, actors, product):

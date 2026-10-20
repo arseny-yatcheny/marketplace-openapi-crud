@@ -2,7 +2,7 @@ from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 from enum import Enum
 from math import ceil
 from argon2.exceptions import VerificationError
-from sqlalchemy import select, update, delete, func, text
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.dialects.postgresql import insert
 from app import settings
 from app.errors import BusinessError
@@ -10,7 +10,7 @@ from app.security import password_hasher, issue_tokens, decode_token
 from app.tables import users, products, orders, order_items, promo_codes, user_operations, refresh_tokens
 
 ACTIVE_ORDERS = ('CREATED','PAYMENT_PENDING')
-TRANSITIONS = {'CREATED':'PAYMENT_PENDING','PAYMENT_PENDING':'PAID','PAID':'SHIPPED','SHIPPED':'COMPLETED'}
+TRANSITIONS = {'CREATED':('PAYMENT_PENDING','CANCELED'),'PAYMENT_PENDING':('PAID','CANCELED'),'PAID':('SHIPPED',),'SHIPPED':('COMPLETED',)}
 MAX_MONEY = Decimal('9999999999.99')
 
 
@@ -65,12 +65,9 @@ def refresh(body, db):
         return issue_tokens(db,user)
 
 
-def check_seller(db, actor, owner_id):
+def check_seller(actor, owner_id):
     if actor['role'] != 'ADMIN' and owner_id != actor['id']:
         raise BusinessError('ACCESS_DENIED',403,'Можно управлять только своими товарами')
-    owner_role = db.scalar(select(users.c.role).where(users.c.id == owner_id))
-    if owner_role not in ('SELLER','ADMIN'):
-        invalid('seller_id','Владельцем должен быть существующий SELLER или ADMIN')
 
 
 def product_by_id(db, id, lock=False):
@@ -83,10 +80,9 @@ def product_by_id(db, id, lock=False):
 
 def create_product(body, db, actor):
     fields = data(body)
-    fields['seller_id'] = fields.get('seller_id') or actor['id']
+    fields['seller_id'] = actor['id']
     fields['price'] = money(fields['price'])
     with db.begin():
-        check_seller(db,actor,fields['seller_id'])
         return dict(db.execute(insert(products).values(**fields).returning(products)).mappings().one())
 
 
@@ -107,18 +103,16 @@ def list_products(db, actor, page=0, size=20, status=None, category=None):
 def update_product(id, body, db, actor):
     with db.begin():
         original = product_by_id(db,id,lock=True)
-        check_seller(db,actor,original['seller_id'])
+        check_seller(actor,original['seller_id'])
         fields = data(body)
-        fields['seller_id'] = fields.get('seller_id') or original['seller_id']
         fields['price'] = money(fields['price'])
-        check_seller(db,actor,fields['seller_id'])
         return dict(db.execute(update(products).where(products.c.id == id).values(**fields).returning(products)).mappings().one())
 
 
 def delete_product(id, db, actor):
     with db.begin():
         product = product_by_id(db,id,lock=True)
-        check_seller(db,actor,product['seller_id'])
+        check_seller(actor,product['seller_id'])
         db.execute(update(products).where(products.c.id == id).values(status='ARCHIVED'))
 
 
@@ -298,20 +292,11 @@ def cancel_order(id, db, actor):
         if order['promo_code_id'] is not None:
             promo = find_promo(db,promo_codes.c.id == order['promo_code_id'])
             db.execute(update(promo_codes).where(promo_codes.c.id == promo['id']).values(current_uses=promo_codes.c.current_uses - 1))
-        db.execute(update(orders).where(orders.c.id == id).values(status='CANCELED'))
+        set_order_status(db,order,'CANCELED')
         return order_view(db,id,actor)
 
 
-def transition_order(id, body, db, actor):
-    with db.begin():
-        order = order_by_id(db,id,actor,lock=True)
-        target = value(body.status)
-        if TRANSITIONS.get(order['status']) != target:
-            raise BusinessError('INVALID_STATE_TRANSITION',409,'Недопустимый переход состояния',{'from':order['status'],'to':target})
-        db.execute(update(orders).where(orders.c.id == id).values(status=target))
-        return order_view(db,id,actor)
-
-
-def health(db):
-    db.execute(text('SELECT 1'))
-    return {'status':'ok'}
+def set_order_status(db, order, target):
+    if target not in TRANSITIONS.get(order['status'],()):
+        raise BusinessError('INVALID_STATE_TRANSITION',409,'Недопустимый переход состояния',{'from':order['status'],'to':target})
+    db.execute(update(orders).where(orders.c.id == order['id']).values(status=target))
