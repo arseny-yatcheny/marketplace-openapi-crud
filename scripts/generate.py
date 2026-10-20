@@ -17,6 +17,7 @@ subprocess.run([
     '--output-model-type', 'pydantic_v2.BaseModel',
     '--target-python-version', '3.12', '--field-constraints',
     '--strict-nullable', '--disable-timestamp',
+    '--set-default-enum-member',
     '--base-class', 'app.schema_base.ContractModel',
 ], check=True)
 model_path = output / 'models.py'

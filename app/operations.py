@@ -37,7 +37,7 @@ def now(db):
 def register(body, db):
     fields = data(body)
     with db.begin():
-        user = db.execute(insert(users).values(username=fields['username'],password_hash=password_hasher.hash(fields['password']),role=fields['role']).on_conflict_do_nothing(index_elements=['username']).returning(users.c.id,users.c.username,users.c.role)).mappings().first()
+        user = db.execute(insert(users).values(username=fields['username'],password_hash=password_hasher.hash(body.password.get_secret_value()),role=fields['role']).on_conflict_do_nothing(index_elements=['username']).returning(users.c.id,users.c.username,users.c.role)).mappings().first()
         if user is None:
             raise BusinessError('USERNAME_TAKEN',409,'Имя пользователя уже занято')
         return dict(user)
@@ -47,7 +47,7 @@ def login(body, db):
     with db.begin():
         user = db.execute(select(users).where(users.c.username == body.username)).mappings().first()
         try:
-            if user is None or not password_hasher.verify(user['password_hash'],body.password):
+            if user is None or not password_hasher.verify(user['password_hash'],body.password.get_secret_value()):
                 raise VerificationError()
         except VerificationError:
             raise BusinessError('INVALID_CREDENTIALS',401,'Неверное имя пользователя или пароль')
