@@ -1,0 +1,17 @@
+services:
+  db:
+    environment:
+      POSTGRES_DB: marketplace_test
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U marketplace -d marketplace_test']
+  migrate:
+    environment:
+      FLYWAY_URL: jdbc:postgresql://db:5432/marketplace_test
+  api:
+    environment:
+      ORDER_INTERVAL_MINUTES: 0
+      DATABASE_URL: postgresql+psycopg://marketplace:${POSTGRES_PASSWORD:-local-marketplace}@db:5432/marketplace_test
+    command: [python, -m, pytest, -q, -p, no:cacheprovider]
+    healthcheck:
+      disable: true
+    ports: !reset []

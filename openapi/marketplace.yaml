@@ -1,0 +1,1719 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: 1.0.0
+  description: 'Учебный маркетплейс. Цена передаётся JSON-числом с точностью до копеек.
+    Все операции, кроме /auth/* и /health, требуют access JWT. Неверные входные данные
+    возвращают 400. Повторные product_id в заказе запрещены. Скидка PERCENTAGE свыше
+    70% не применяется: оплачивается 100% цены. При обновлении сохранённые позиции
+    сохраняют исходную цену; новые получают текущую. При отмене резерв и использование
+    промокода возвращаются один раз.'
+servers:
+- url: http://localhost:8000
+security:
+- BearerAuth: []
+paths:
+  /auth/register:
+    post:
+      operationId: register
+      summary: Регистрация USER или SELLER
+      description: Регистрация USER или SELLER. ADMIN создаётся только через CLI
+      tags:
+      - auth
+      responses:
+        '201':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: &id001
+                type: string
+                format: uuid
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: USERNAME_TAKEN
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: []
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+  /auth/login:
+    post:
+      operationId: login
+      summary: Вход
+      description: Вход. Access JWT действует 20 минут, refresh JWT — 14 дней
+      tags:
+      - auth
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: INVALID_CREDENTIALS
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: []
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+  /auth/refresh:
+    post:
+      operationId: refresh
+      summary: Обновление пары токенов
+      description: 'Обновление пары токенов. Refresh одноразовый: предыдущий отзывается
+        атомарно'
+      tags:
+      - auth
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: REFRESH_TOKEN_INVALID
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: []
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+  /products:
+    post:
+      operationId: create_product
+      summary: Создание товара
+      description: 'Создание товара. SELLER может указать только себя. ADMIN может
+        задать seller_id; по умолчанию владельцем становится автор запроса Роли: SELLER,
+        ADMIN.'
+      tags:
+      - products
+      responses:
+        '201':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: &id003
+      - SELLER
+      - ADMIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+    get:
+      operationId: list_products
+      summary: Список всех товаров, включая ARCHIVED
+      description: 'Список всех товаров, включая ARCHIVED. Фильтры status и category
+        применяются совместно, category сравнивается точно. Порядок created_at, id
+        Роли: USER, SELLER, ADMIN.'
+      tags:
+      - products
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: &id002
+      - USER
+      - SELLER
+      - ADMIN
+      parameters:
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+      - name: size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/ProductStatus'
+      - name: category
+        in: query
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+  /products/{id}:
+    get:
+      operationId: get_product
+      summary: Получение любого товара
+      description: 'Получение любого товара Роли: USER, SELLER, ADMIN.'
+      tags:
+      - products
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: PRODUCT_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+    put:
+      operationId: update_product
+      summary: Полная замена полей товара
+      description: 'Полная замена полей товара. SELLER меняет только свой товар и
+        не передаёт владение. ADMIN меняет любой. Отсутствующий seller_id сохраняет
+        владельца Роли: SELLER, ADMIN.'
+      tags:
+      - products
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: PRODUCT_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdate'
+    delete:
+      operationId: delete_product
+      summary: Мягкое удаление товара в ARCHIVED
+      description: 'Мягкое удаление товара в ARCHIVED. SELLER удаляет только свой
+        товар. Повторное удаление возвращает 204 Роли: SELLER, ADMIN.'
+      tags:
+      - products
+      responses:
+        '204':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: PRODUCT_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+  /orders:
+    post:
+      operationId: create_order
+      summary: Создание собственного заказа и резервирование в одной транзакции
+      description: 'Создание собственного заказа и резервирование в одной транзакции.
+        Проверки: лимит, активный заказ, каталог, остатки, промокод Роли: USER, ADMIN.'
+      tags:
+      - orders
+      responses:
+        '201':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: ORDER_LIMIT_EXCEEDED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: ORDER_HAS_ACTIVE, PRODUCT_INACTIVE, INSUFFICIENT_STOCK
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: PRODUCT_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '422':
+          description: PROMO_CODE_INVALID, PROMO_CODE_MIN_AMOUNT
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: &id004
+      - USER
+      - ADMIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+  /orders/{id}:
+    get:
+      operationId: get_order
+      summary: Получение заказа
+      description: 'Получение заказа. USER видит только свой, ADMIN — любой Роли:
+        USER, ADMIN.'
+      tags:
+      - orders
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED, ORDER_OWNERSHIP_VIOLATION
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: ORDER_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id004
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+    put:
+      operationId: update_order
+      summary: Замена позиций только в CREATED
+      description: 'Замена позиций только в CREATED. USER обновляет свой заказ, ADMIN
+        — любой. Лимит относится к автору запроса. Порог промокода проверяется заново;
+        при недостаточной сумме промокод снимается. Уже занятое заказом использование
+        учитывается при проверке max_uses. Истёкший или выключенный промокод даёт
+        422 и откат Роли: USER, ADMIN.'
+      tags:
+      - orders
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED, ORDER_OWNERSHIP_VIOLATION
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: ORDER_NOT_FOUND, PRODUCT_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: INVALID_STATE_TRANSITION, PRODUCT_INACTIVE, INSUFFICIENT_STOCK
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: ORDER_LIMIT_EXCEEDED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '422':
+          description: PROMO_CODE_INVALID
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id004
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdate'
+  /orders/{id}/cancel:
+    post:
+      operationId: cancel_order
+      summary: Отмена из CREATED или PAYMENT_PENDING
+      description: 'Отмена из CREATED или PAYMENT_PENDING. USER отменяет свой заказ,
+        ADMIN — любой. Остатки и использование промокода возвращаются атомарно Роли:
+        USER, ADMIN.'
+      tags:
+      - orders
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED, ORDER_OWNERSHIP_VIOLATION
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: ORDER_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: INVALID_STATE_TRANSITION
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id004
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+  /orders/{id}/status:
+    post:
+      operationId: transition_order
+      summary: Переход строго по цепочке CREATED → PAYMENT_PENDING → PAID → SHIPPED
+        → COMPLETED
+      description: 'Переход строго по цепочке CREATED → PAYMENT_PENDING → PAID → SHIPPED
+        → COMPLETED. Служебная операция ADMIN для демонстрации жизненного цикла Роли:
+        ADMIN.'
+      tags:
+      - orders
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: ORDER_NOT_FOUND
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: INVALID_STATE_TRANSITION
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles:
+      - ADMIN
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderTransition'
+  /promo-codes:
+    post:
+      operationId: create_promo
+      summary: Создание промокода
+      description: 'Создание промокода. Для PERCENTAGE значение не выше 100. valid_until
+        строго позже valid_from Роли: SELLER, ADMIN.'
+      tags:
+      - promo-codes
+      responses:
+        '201':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: TOKEN_INVALID, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: ACCESS_DENIED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: PROMO_CODE_EXISTS
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: *id003
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoCreate'
+  /health:
+    get:
+      operationId: health
+      summary: Проверка доступности API и PostgreSQL
+      description: Проверка доступности API и PostgreSQL
+      tags:
+      - health
+      responses:
+        '200':
+          description: Успешный ответ
+          headers:
+            X-Request-Id:
+              schema: *id001
+              description: UUID запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '400':
+          description: VALIDATION_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '405':
+          description: METHOD_NOT_ALLOWED
+          headers:
+            X-Request-Id:
+              schema: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      x-roles: []
+      security: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ProductStatus:
+      type: string
+      enum:
+      - ACTIVE
+      - INACTIVE
+      - ARCHIVED
+    OrderStatus:
+      type: string
+      enum:
+      - CREATED
+      - PAYMENT_PENDING
+      - PAID
+      - SHIPPED
+      - COMPLETED
+      - CANCELED
+    Role:
+      type: string
+      enum:
+      - USER
+      - SELLER
+      - ADMIN
+    ProductCreate:
+      type: object
+      additionalProperties: false
+      required: &id005
+      - name
+      - price
+      - stock
+      - category
+      - status
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        seller_id:
+          type: string
+          format: uuid
+    ProductUpdate:
+      type: object
+      additionalProperties: false
+      required: *id005
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        seller_id:
+          type: string
+          format: uuid
+    ProductResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - description
+      - price
+      - stock
+      - category
+      - status
+      - seller_id
+      - id
+      - created_at
+      - updated_at
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        seller_id:
+          type: string
+          format: uuid
+        id: *id001
+        created_at: &id006
+          type: string
+          format: date-time
+        updated_at: *id006
+    ProductPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - totalElements
+      - page
+      - size
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductResponse'
+        totalElements:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 100
+    OrderItemInput:
+      type: object
+      additionalProperties: false
+      required:
+      - product_id
+      - quantity
+      properties:
+        product_id: *id001
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+    OrderCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items: &id007
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+        promo_code:
+          type: string
+          pattern: ^[A-Z0-9_]{4,20}$
+          nullable: true
+    OrderUpdate:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items: *id007
+    OrderItemResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - product_id
+      - quantity
+      - price_at_order
+      properties:
+        id: *id001
+        product_id: *id001
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+        price_at_order:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+    OrderResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - user_id
+      - status
+      - promo_code_id
+      - total_amount
+      - discount_amount
+      - items
+      - created_at
+      - updated_at
+      properties:
+        id: *id001
+        user_id: *id001
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        promo_code_id:
+          type: string
+          format: uuid
+          nullable: true
+        total_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        discount_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemResponse'
+        created_at: *id006
+        updated_at: *id006
+    OrderTransition:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - PAYMENT_PENDING
+          - PAID
+          - SHIPPED
+          - COMPLETED
+    PromoCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - max_uses
+      - code
+      - discount_value
+      - valid_until
+      - min_order_amount
+      - discount_type
+      - valid_from
+      properties:
+        code: &id008
+          type: string
+          pattern: ^[A-Z0-9_]{4,20}$
+        discount_type: &id009
+          type: string
+          enum:
+          - PERCENTAGE
+          - FIXED_AMOUNT
+        discount_value: &id010
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        min_order_amount: &id011
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        max_uses: &id012
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        valid_from: *id006
+        valid_until: *id006
+        active: &id013
+          type: boolean
+          default: true
+    PromoResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - discount_type
+      - discount_value
+      - min_order_amount
+      - max_uses
+      - valid_from
+      - valid_until
+      - active
+      - id
+      - current_uses
+      properties:
+        code: *id008
+        discount_type: *id009
+        discount_value: *id010
+        min_order_amount: *id011
+        max_uses: *id012
+        valid_from: *id006
+        valid_until: *id006
+        active: *id013
+        id: *id001
+        current_uses:
+          type: integer
+          minimum: 0
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - username
+      - password
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+          pattern: ^[a-zA-Z0-9_.-]+$
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          format: password
+          writeOnly: true
+        role:
+          type: string
+          enum:
+          - USER
+          - SELLER
+          default: USER
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - username
+      - password
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          format: password
+          writeOnly: true
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - username
+      - role
+      properties:
+        id: *id001
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required:
+      - access_token
+      - refresh_token
+      - token_type
+      - expires_in
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+          - bearer
+        expires_in:
+          type: integer
+          example: 1200
+    ApiError:
+      type: object
+      additionalProperties: false
+      required:
+      - error_code
+      - message
+      properties:
+        error_code:
+          type: string
+          enum:
+          - PRODUCT_NOT_FOUND
+          - PRODUCT_INACTIVE
+          - ORDER_NOT_FOUND
+          - ORDER_LIMIT_EXCEEDED
+          - ORDER_HAS_ACTIVE
+          - INVALID_STATE_TRANSITION
+          - INSUFFICIENT_STOCK
+          - PROMO_CODE_INVALID
+          - PROMO_CODE_MIN_AMOUNT
+          - ORDER_OWNERSHIP_VIOLATION
+          - VALIDATION_ERROR
+          - TOKEN_EXPIRED
+          - TOKEN_INVALID
+          - REFRESH_TOKEN_INVALID
+          - ACCESS_DENIED
+          - USERNAME_TAKEN
+          - PROMO_CODE_EXISTS
+          - INVALID_CREDENTIALS
+          - NOT_FOUND
+          - METHOD_NOT_ALLOWED
+          - INTERNAL_ERROR
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+x-error-codes:
+  PRODUCT_NOT_FOUND: 404
+  PRODUCT_INACTIVE: 409
+  ORDER_NOT_FOUND: 404
+  ORDER_LIMIT_EXCEEDED: 429
+  ORDER_HAS_ACTIVE: 409
+  INVALID_STATE_TRANSITION: 409
+  INSUFFICIENT_STOCK: 409
+  PROMO_CODE_INVALID: 422
+  PROMO_CODE_MIN_AMOUNT: 422
+  ORDER_OWNERSHIP_VIOLATION: 403
+  VALIDATION_ERROR: 400
+  TOKEN_EXPIRED: 401
+  TOKEN_INVALID: 401
+  REFRESH_TOKEN_INVALID: 401
+  ACCESS_DENIED: 403
+  USERNAME_TAKEN: 409
+  PROMO_CODE_EXISTS: 409
+  INVALID_CREDENTIALS: 401
+  NOT_FOUND: 404
+  METHOD_NOT_ALLOWED: 405
+  INTERNAL_ERROR: 500
